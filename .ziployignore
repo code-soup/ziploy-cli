@@ -1,0 +1,11 @@
+# Ignored files
+
+src/
+node_modules/
+unzipped/
+dont-include-me/
+*.log
+.ziploy
+.gitignore
+*.txt
+*.DS_Store
