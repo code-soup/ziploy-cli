@@ -2,7 +2,8 @@
 
 # Default files to ignore
 # Files we don't want to upload to remote server
-ignoreArray=('*.swp' '.ziployignore' '.git', 'ziploy')
+ignoreArray=('*.swp' '.ziployignore' '*.git*' 'ziploy' 'node_modules/\*')
+
 
 # Ziploy Ignore custom file
 ignoreList='.ziployignore'
@@ -10,18 +11,23 @@ ignoreList='.ziployignore'
 # Ziploy file name, without extension
 zipFilename='_ziploy.zip'
 
-ziployId=14
-ziploySecret='randomString'
-ziployEndpoint='cs.zz/ziploy/wp-json/ziploy/v1/update'
+ziployId="${1}"
+ziploySecret="${2}"
+ziployEndpoint="${3}"
 
 # Remove zipped file if alreay exists
 if [[ -f $zipFilename ]]; then
     rm -rf "${zipFilename}"
+    echo "Cache Cleared"
+    sleep 1
 fi
 
 
 # Read all ignored files and append them to ignoreArray
 if [[ -f $ignoreList ]]; then
+
+    echo "Generating list of files for ziployment"
+    sleep 1
 
     # Loop trough all lines in file
     while read line
@@ -35,15 +41,29 @@ if [[ -f $ignoreList ]]; then
 fi
 
 # Zip everything
-zip -r "${zipFilename}" . -x "${ignoreArray[@]}"
+echo "Creating ziploy"
+sleep 1
+zip -qq -r "${zipFilename}" . -x "${ignoreArray[@]}"
 
 # CURL upload zipped file to WordPress Ziploy endpoint
 if [[ -f $zipFilename ]]; then
 
-    curl \
+    echo "Uploading files to remote server"
+
+    response=(`curl \
         -L -X POST "${ziployEndpoint}" \
         -H "cache-control: no-cache" \
         -F "ziploy=@${zipFilename}" \
         -F "id=${ziployId}" \
-        -F "secret=${ziploySecret}"
+        -F "secret=${ziploySecret}"`)
+
+    echo "${response}"
+fi
+
+
+# Remove zipped file if alreay exists
+if [[ -f $zipFilename ]]; then
+    rm -rf "${zipFilename}"
+    echo "Cleanup Complete"
+    sleep 1
 fi
