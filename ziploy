@@ -50,6 +50,8 @@ echo "Creating ziploy"
 sleep 1
 zip -qq -r "${zipFilename}" . -x "${ignoreArray[@]}"
 
+ls -al
+
 
 # CURL POST zipped file to WordPress Ziploy endpoint
 if [[ -f $zipFilename ]]; then
