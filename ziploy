@@ -15,9 +15,9 @@ ziployId="${1}"
 ziploySecret="${2}"
 ziployEndpoint="${3}"
 
-echo "id: $1"
-echo "secret: $2"
-echo "endpoint: $3"
+echo "id: $ziployId"
+echo "secret: $ziploySecret"
+echo "endpoint: $ziployEndpoint"
 
 
 # Remove zipped file if alreay exists
