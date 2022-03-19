@@ -15,6 +15,11 @@ ziployId="${1}"
 ziploySecret="${2}"
 ziployEndpoint="${3}"
 
+echo "${1}"
+echo "${2}"
+echo "${3}"
+
+
 # Remove zipped file if alreay exists
 if [[ -f $zipFilename ]]; then
     rm -rf "${zipFilename}"
@@ -45,7 +50,8 @@ echo "Creating ziploy"
 sleep 1
 zip -qq -r "${zipFilename}" . -x "${ignoreArray[@]}"
 
-# CURL upload zipped file to WordPress Ziploy endpoint
+
+# CURL POST zipped file to WordPress Ziploy endpoint
 if [[ -f $zipFilename ]]; then
 
     echo "Uploading files to remote server"
