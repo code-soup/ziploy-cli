@@ -2,7 +2,7 @@
 
 # Default files to ignore
 # Files we don't want to upload to remote server
-ignoreArray=('*.swp' '.ziployignore' '*.git*' 'ziploy' 'node_modules/\*')
+ignoreArray=('*.swp' '.ziployignore' '*.git*' 'ziploy' 'node_modules/*')
 
 
 # Ziploy Ignore custom file
@@ -13,36 +13,39 @@ zipFilename='_ziploy.zip'
 
 ziployId="${1}"
 ziploySecret="${2}"
-ziployEndpoint="${3}"
-
-echo "id: $ziployId"
-echo "secret: $ziploySecret"
-echo "endpoint: $ziployEndpoint"
+ziployEndpoint=$(echo "$3" | xargs)
+ziployEndpoint="${ziployEndpoint%/}/wp-json/ziploy/v1/update"
 
 
 # Remove zipped file if alreay exists
 if [[ -f $zipFilename ]]; then
     rm -rf "${zipFilename}"
-    echo "Cache Cleared"
+    echo "Cleaning repository cache"
     sleep 1
 fi
 
-
-# Read all ignored files and append them to ignoreArray
-if [[ -f $ignoreList ]]; then
-
-    echo "Generating list of files for ziployment"
+if [[ -f "$ignoreList" ]]; then
+    
+    echo "Generating ignore list"
     sleep 1
-
-    # Loop trough all lines in file
-    while read line
-    do
-        # Skip empty lines and lines with comment
-        if [[ "$line" =~ [^[:space:]] && ${line::1} != "#" ]]; then
-            ignoreArray+=("${line}")
+    
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        
+        # Trim whitespace from both ends
+        line=$(echo "$line" | xargs)
+        
+        # Skip empty lines and lines starting with a comment (#)
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        
+        # Append '*' if line ends with '/'
+        if [[ "$line" == */ ]]; then
+            line="${line}*"
         fi
+        
+        # Append to ignore list
+        ignoreArray+=("$line")
 
-    done < $ignoreList
+    done < "$ignoreList"
 fi
 
 # Zip everything
@@ -50,28 +53,28 @@ echo "Creating ziploy"
 sleep 1
 zip -qq -r "${zipFilename}" . -x "${ignoreArray[@]}"
 
-ls -al
-
 
 # CURL POST zipped file to WordPress Ziploy endpoint
 if [[ -f $zipFilename ]]; then
 
-    echo "Uploading files to remote server"
+    echo "Ziploying files to remote server"
 
-    response=(`curl \
-        -L -X POST "${ziployEndpoint}" \
+    response=$(curl -L -X POST "${ziployEndpoint}" \
         -H "cache-control: no-cache" \
         -F "ziploy=@${zipFilename}" \
         -F "id=${ziployId}" \
-        -F "secret=${ziploySecret}"`)
-
-    echo "${response}"
+        -F "secret=${ziploySecret}")
+    
+    echo -e "\033[0;32mRemote\033[0m: $response"
+    sleep 1
 fi
 
 
 # Remove zipped file if alreay exists
 if [[ -f $zipFilename ]]; then
     rm -rf "${zipFilename}"
-    echo "Cleanup Complete"
+    echo "Cleanup completed"
     sleep 1
+
+    echo "All tasks completed"
 fi
