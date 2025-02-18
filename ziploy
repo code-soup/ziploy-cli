@@ -2,7 +2,7 @@
 
 # Default files to ignore
 # Files we don't want to upload to remote server
-ignoreArray=('*.swp' '.ziployignore' '*.git*' 'ziploy' 'node_modules/*')
+ignoreArray=('*.swp' '.ziployignore' '*.git*' 'ziploy' 'node_modules/*' '__to-ziploy/' '__to-ziploy')
 
 
 # Ziploy Ignore custom file
@@ -15,6 +15,7 @@ ziployId="${1}"
 ziploySecret="${2}"
 ziployEndpoint=$(echo "$3" | xargs)
 ziployEndpoint="${ziployEndpoint%/}/wp-json/ziploy/v1/update"
+ziployTargetDir="__to-ziploy"
 
 
 # Remove zipped file if alreay exists
@@ -24,6 +25,12 @@ if [[ -f $zipFilename ]]; then
     sleep 1
 fi
 
+# Delete folder with chunks
+if [ -d $ziployTargetDir ]; then
+    rm -rf "${ziployTargetDir}"
+fi
+
+# Update ignore list from .ziployignore
 if [[ -f "$ignoreList" ]]; then
     
     echo "Generating ignore list"
@@ -49,32 +56,59 @@ if [[ -f "$ignoreList" ]]; then
 fi
 
 # Zip everything
-echo "Creating ziploy"
+echo "Preparing files for ziploy"
 sleep 1
-zip -qq -r "${zipFilename}" . -x "${ignoreArray[@]}"
+
+# Create directory for chunked zip files
+mkdir "$ziployTargetDir";
+sleep 1
 
 
-# CURL POST zipped file to WordPress Ziploy endpoint
-if [[ -f $zipFilename ]]; then
+# Create a single zip file
+zipFile="${ziployTargetDir}/${zipFilename}"
+zip -qq -r "${zipFile}" . -x "${ignoreArray[@]}"
 
-    echo "Ziploying files to remote server"
+# Split the zip file into 10MB chunks.
+# This will create files like archive.zip.aa, archive.zip.ab, etc.
+split -b 10m "${zipFile}" "${zipFile}."
 
-    response=$(curl -L -X POST "${ziployEndpoint}" \
-        -H "cache-control: no-cache" \
-        -F "ziploy=@${zipFilename}" \
-        -F "id=${ziployId}" \
-        -F "secret=${ziploySecret}")
-    
-    echo -e "\033[0;32mRemote\033[0m: $response"
-    sleep 1
+# Remove single zipped file
+if [[ -f $zipFile ]]; then
+    rm -rf "${zipFile}"
 fi
 
+# Rename the split files to have numeric suffixes (.01, .02, etc.)
+i=1
+for f in "${zipFile}."*; do
+    new=$(printf "%s.z%02d" "$zipFile" "$i")
+    mv "$f" "$new"
+    i=$((i + 1))
+done
+
+if [ -d "$ziployTargetDir" ]; then
+    echo "Uploading files from $ziployTargetDir to remote server"
+    total=$(find "$ziployTargetDir" -type f | wc -l)
+    current=0
+    find "$ziployTargetDir" -type f -print0 | while IFS= read -r -d '' file; do
+        current=$((current + 1))
+        response=$(curl -L -X POST "${ziployEndpoint}" \
+            -H "cache-control: no-cache" \
+            -F "ziploy=@${file}" \
+            -F "id=${ziployId}" \
+            -F "secret=${ziploySecret}" \
+            -F "current=${current}" \
+            -F "total=${total}")
+        echo -e "\033[0;32mRemote\033[0m: $response"
+    done
+else
+    echo "Directory ${ziployTargetDir} does not exist."
+fi
+
+sleep 1
 
 # Remove zipped file if alreay exists
-if [[ -f $zipFilename ]]; then
-    rm -rf "${zipFilename}"
-    echo "Cleanup completed"
-    sleep 1
-
-    echo "All tasks completed"
+if [[ -d $ziployTargetDir ]]; then
+    rm -rf "${ziployTargetDir}"
 fi
+
+echo "All tasks completed"
