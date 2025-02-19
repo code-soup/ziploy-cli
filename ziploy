@@ -1,114 +1,181 @@
-#!/bin/bash
+#!/bin/bash -l
+
+set -e
+
+#############################
+# Global Variables
+#############################
 
 # Default files to ignore
-# Files we don't want to upload to remote server
 ignoreArray=('*.swp' '.ziployignore' '*.git*' 'ziploy' 'node_modules/*' '__to-ziploy/' '__to-ziploy')
 
-
-# Ziploy Ignore custom file
+# Custom ignore file
 ignoreList='.ziployignore'
 
-# Ziploy file name, without extension
+# Ziploy file name (without extension)
 zipFilename='_ziploy.zip'
 
+# Credentials and endpoint
 ziployId="${1}"
 ziploySecret="${2}"
-ziployEndpoint=$(echo "$3" | xargs)
-ziployEndpoint="${ziployEndpoint%/}/wp-json/ziploy/v1/update"
+ziployRemoteHost=$(echo "$3" | xargs)
+ziployEndpoint="${ziployRemoteHost%/}/wp-json/ziploy/v1/update"
+#ziployEndpointUpdate="${ziployRemoteHost%/}/wp-json/ziploy/v1/ziploy"
+
+# Directory for split chunks
 ziployTargetDir="__to-ziploy"
 
+#############################
+# Functions
+#############################
+setup_env() {
+    SSH_USER="${ZIPLOY_SSH_USER}"
+    SSH_PORT="${ZIPLOY_SSH_PORT}"
+    SSH_HOST="${ZIPLOY_SSH_HOST}"
+}
 
-# Remove zipped file if alreay exists
-if [[ -f $zipFilename ]]; then
-    rm -rf "${zipFilename}"
+setup_ssh_dir() {
+    echo "Setting SSH"
+
+    if [ ! -d "${HOME}/.ssh" ]; then
+        mkdir "${HOME}/.ssh"
+        SSH_PATH="${HOME}/.ssh"
+        mkdir "${SSH_PATH}/ctl/"
+        
+        # Set Key Perms
+        chmod -R 700 "$SSH_PATH"
+    else
+        SSH_PATH="${HOME}/.ssh"
+    fi
+
+    #Copy secret keys to container
+    ZIPLOY_SSHG_KEY_PRIVATE_PATH="${SSH_PATH}/ziploy_id_rsa"
+    umask  077 ; echo "${ZIPLOY_SSHG_KEY_PRIVATE}" > "${ZIPLOY_SSHG_KEY_PRIVATE_PATH}"
+
+    chmod 600 "${ZIPLOY_SSHG_KEY_PRIVATE_PATH}"
+    
+    #establish knownhosts
+    KNOWN_HOSTS_PATH="${SSH_PATH}/known_hosts"
+    ssh-keyscan -t rsa "${SSH_HOST}" >> "${KNOWN_HOSTS_PATH}"
+    chmod 644 "${KNOWN_HOSTS_PATH}"
+}
+
+cleanup() {
     echo "Cleaning repository cache"
+
+    # Remove previous zip file if it exists
+    if [[ -f $zipFilename ]]; then
+        rm -rf "${zipFilename}"
+    fi
+
+    # Remove target directory for chunks
+    if [ -d "$ziployTargetDir" ]; then
+        rm -rf "${ziployTargetDir}"
+    fi
+}
+
+update_ignore_list() {
+    # Append custom ignore patterns from .ziployignore file
+    if [[ -f "$ignoreList" ]]; then
+        echo "Generating ignore list"
+        sleep 1
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            # Trim whitespace
+            line=$(echo "$line" | xargs)
+            # Skip empty lines and comments
+            [[ -z "$line" || "$line" == \#* ]] && continue
+            # Append '*' if line ends with '/'
+            if [[ "$line" == */ ]]; then
+                line="${line}*"
+            fi
+            ignoreArray+=("$line")
+        done < "$ignoreList"
+    fi
+}
+
+create_ziploy() {
+    echo "Preparing files for ziploy"
     sleep 1
-fi
 
-# Delete folder with chunks
-if [ -d $ziployTargetDir ]; then
-    rm -rf "${ziployTargetDir}"
-fi
-
-# Update ignore list from .ziployignore
-if [[ -f "$ignoreList" ]]; then
-    
-    echo "Generating ignore list"
+    # Create directory for chunked zip files
+    mkdir -p "$ziployTargetDir"
     sleep 1
-    
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        
-        # Trim whitespace from both ends
-        line=$(echo "$line" | xargs)
-        
-        # Skip empty lines and lines starting with a comment (#)
-        [[ -z "$line" || "$line" == \#* ]] && continue
-        
-        # Append '*' if line ends with '/'
-        if [[ "$line" == */ ]]; then
-            line="${line}*"
-        fi
-        
-        # Append to ignore list
-        ignoreArray+=("$line")
 
-    done < "$ignoreList"
-fi
+    # Create a complete zip file in the target directory
+    zipFile="${ziployTargetDir}/${zipFilename}"
+    zip -qq -r "${zipFile}" . -x "${ignoreArray[@]}"
 
-# Zip everything
-echo "Preparing files for ziploy"
-sleep 1
+    # Split the zip file into 5MB chunks.
+    # This creates files like archive.zip.aa, archive.zip.ab, etc.
+    split -b 5m "${zipFile}" "${zipFile}."
 
-# Create directory for chunked zip files
-mkdir "$ziployTargetDir";
-sleep 1
+    # Remove the original full zip file
+    if [[ -f "$zipFile" ]]; then
+        rm -rf "$zipFile"
+    fi
 
-
-# Create a single zip file
-zipFile="${ziployTargetDir}/${zipFilename}"
-zip -qq -r "${zipFile}" . -x "${ignoreArray[@]}"
-
-# Split the zip file into 10MB chunks.
-# This will create files like archive.zip.aa, archive.zip.ab, etc.
-split -b 10m "${zipFile}" "${zipFile}."
-
-# Remove single zipped file
-if [[ -f $zipFile ]]; then
-    rm -rf "${zipFile}"
-fi
-
-# Rename the split files to have numeric suffixes (.01, .02, etc.)
-i=1
-for f in "${zipFile}."*; do
-    new=$(printf "%s.z%02d" "$zipFile" "$i")
-    mv "$f" "$new"
-    i=$((i + 1))
-done
-
-if [ -d "$ziployTargetDir" ]; then
-    echo "Uploading files from $ziployTargetDir to remote server"
-    total=$(find "$ziployTargetDir" -type f | wc -l)
-    current=0
-    find "$ziployTargetDir" -type f -print0 | while IFS= read -r -d '' file; do
-        current=$((current + 1))
-        response=$(curl -L -X POST "${ziployEndpoint}" \
-            -H "cache-control: no-cache" \
-            -F "ziploy=@${file}" \
-            -F "id=${ziployId}" \
-            -F "secret=${ziploySecret}" \
-            -F "current=${current}" \
-            -F "total=${total}")
-        echo -e "\033[0;32mRemote\033[0m: $response"
+    # Rename the split files to have numeric suffixes (.z01, .z02, etc.)
+    i=1
+    for f in "${zipFile}."*; do
+        new=$(printf "%s.z%02d" "$zipFile" "$i")
+        mv "$f" "$new"
+        i=$((i + 1))
     done
-else
-    echo "Directory ${ziployTargetDir} does not exist."
-fi
+}
 
-sleep 1
+process_response() {
+    local response="$1"
+    
+    # Check if response is valid JSON
+    if echo "$response" | jq . >/dev/null 2>&1; then
 
-# Remove zipped file if alreay exists
-if [[ -d $ziployTargetDir ]]; then
-    rm -rf "${ziployTargetDir}"
-fi
+        local package
+        local destination
+        package=$(echo "$response" | jq -r '.package')
+        destination=$(echo "$response" | jq -r '.destination')
+        
+        # Execute SSH command to extract the zip file on remote server
+        # Uncomment and modify the following line as needed:
+        ssh -i /path/to/private_key user@remote.server "unzip -o ${package} -d ${destination}"
+    else
+        echo "$response"
+    fi
+}
 
-echo "All tasks completed"
+upload_files() {
+    if [ -d "$ziployTargetDir" ]; then
+        echo "Uploading files from $ziployTargetDir to remote server"
+        total=$(find "$ziployTargetDir" -type f | wc -l)
+        current=0
+
+        find "$ziployTargetDir" -type f -print0 | while IFS= read -r -d '' file; do
+            current=$((current + 1))
+            response=$(curl -L -X POST "${ziployEndpoint}" \
+                -H "cache-control: no-cache" \
+                -F "ziploy=@${file}" \
+                -F "id=${ziployId}" \
+                -F "secret=${ziploySecret}" \
+                -F "current=${current}" \
+                -F "total=${total}")
+
+            process_response "$response"
+        done
+    else
+        echo "Directory ${ziployTargetDir} does not exist."
+    fi
+}
+
+main() {
+    cleanup
+    update_ignore_list
+    create_ziploy
+    upload_files
+    cleanup
+    echo "All tasks completed"
+}
+
+#############################
+# Execute Main Function
+#############################
+
+main
