@@ -105,6 +105,26 @@ process_response() {
         local destination
         package=$(echo "$response" | jq -r '.package')
         destination=$(echo "$response" | jq -r '.destination')
+
+        echo "$package"
+        echo "$destination"
+
+        # Run this before the unzip command to check access:
+        ssh -i "${ssh_key_path}" ${ssh_connection} "ls -ld '${destination}' && whoami"
+
+        # Modify the unzip command to test permissions before extraction:
+        ssh -i "${ssh_key_path}" ${ssh_connection} "touch '${destination}/testfile' && rm '${destination}/testfile'"
+
+        ssh_output=$(ssh -i "${ssh_key_path}" ${ssh_connection} "unzip -o '${package}' -d '${destination}' 2>&1")
+        ssh_status=$?
+
+        echo "🔍 SSH Output:"
+        echo "$ssh_output"
+
+        if [[ $ssh_status -ne 0 ]]; then
+            echo "❌ SSH command failed with exit code $ssh_status"
+            exit 1
+        fi
         
         # Execute SSH command to extract the zip file on remote server
         # Uncomment and modify the following line as needed:
@@ -122,7 +142,10 @@ upload_files() {
 
         find "$ziployTargetDir" -type f -print0 | while IFS= read -r -d '' file; do
             current=$((current + 1))
-            response=$(curl -L -X POST "${ziployEndpoint}" \
+            
+            echo "🚀 Uploading: $file ($current of $total)"
+            
+            response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -L -X POST "${ziployEndpoint}" \
                 -H "cache-control: no-cache" \
                 -F "ziploy=@${file}" \
                 -F "id=${ziployId}" \
@@ -130,10 +153,23 @@ upload_files() {
                 -F "current=${current}" \
                 -F "total=${total}")
 
-            process_response "$response"
+            # Extract HTTP status
+            http_status=$(echo "$response" | grep -o 'HTTP_STATUS:[0-9]*' | cut -d: -f2)
+            response_body=$(echo "$response" | sed -E 's/HTTP_STATUS:[0-9]+$//')
+
+            echo "🔍 Response HTTP Status: $http_status"
+            echo "📦 Response Body: $response_body"
+
+            process_response "$response_body"
+
+            # Check if upload failed
+            if [[ "$http_status" -ne 200 ]]; then
+                echo "❌ Upload failed for $file"
+                exit 1
+            fi
         done
     else
-        echo "Directory ${ziployTargetDir} does not exist."
+        echo "❌ Directory ${ziployTargetDir} does not exist."
     fi
 }
 
