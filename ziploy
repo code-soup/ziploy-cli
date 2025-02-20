@@ -17,10 +17,14 @@ zipFilename='_ziploy.zip'
 
 # Credentials and endpoint
 ziployId="${1}"
-ziploySecret="${2}"
-ziployRemoteHost=$(echo "$3" | xargs)
+ziployRemoteHost=$(echo "$2" | xargs)
+ziployMode="${3}"
 ziployEndpoint="${ziployRemoteHost%/}/wp-json/ziploy/v1/update"
 #ziployEndpointUpdate="${ziployRemoteHost%/}/wp-json/ziploy/v1/ziploy"
+
+# SSH data
+ssh_connection="$4"
+ssh_key_path="$5"
 
 # Directory for split chunks
 ziployTargetDir="__to-ziploy"
@@ -28,38 +32,6 @@ ziployTargetDir="__to-ziploy"
 #############################
 # Functions
 #############################
-setup_env() {
-    SSH_USER="${ZIPLOY_SSH_USER}"
-    SSH_PORT="${ZIPLOY_SSH_PORT}"
-    SSH_HOST="${ZIPLOY_SSH_HOST}"
-}
-
-setup_ssh_dir() {
-    echo "Setting SSH"
-
-    if [ ! -d "${HOME}/.ssh" ]; then
-        mkdir "${HOME}/.ssh"
-        SSH_PATH="${HOME}/.ssh"
-        mkdir "${SSH_PATH}/ctl/"
-        
-        # Set Key Perms
-        chmod -R 700 "$SSH_PATH"
-    else
-        SSH_PATH="${HOME}/.ssh"
-    fi
-
-    #Copy secret keys to container
-    ZIPLOY_SSHG_KEY_PRIVATE_PATH="${SSH_PATH}/ziploy_id_rsa"
-    umask  077 ; echo "${ZIPLOY_SSHG_KEY_PRIVATE}" > "${ZIPLOY_SSHG_KEY_PRIVATE_PATH}"
-
-    chmod 600 "${ZIPLOY_SSHG_KEY_PRIVATE_PATH}"
-    
-    #establish knownhosts
-    KNOWN_HOSTS_PATH="${SSH_PATH}/known_hosts"
-    ssh-keyscan -t rsa "${SSH_HOST}" >> "${KNOWN_HOSTS_PATH}"
-    chmod 644 "${KNOWN_HOSTS_PATH}"
-}
-
 cleanup() {
     echo "Cleaning repository cache"
 
@@ -136,7 +108,7 @@ process_response() {
         
         # Execute SSH command to extract the zip file on remote server
         # Uncomment and modify the following line as needed:
-        ssh -i /path/to/private_key user@remote.server "unzip -o ${package} -d ${destination}"
+        ssh -i ${ssh_key_path} ${ssh_connection} "unzip -o ${package} -d ${destination}"
     else
         echo "$response"
     fi
