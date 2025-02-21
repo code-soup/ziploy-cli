@@ -103,24 +103,36 @@ process_response() {
     echo "🔍 Raw JSON Response:"
     echo "$response"
 
+    # Fix escaped slashes
+    cleaned_response=$(echo "$response" | sed 's/\\\//\//g')
+
+    # Debug: Print Cleaned JSON
+    echo "✅ Cleaned JSON Response:"
+    echo "$cleaned_response"
+
     # Validate JSON format before processing
-    if ! echo "$response" | jq empty 2>/dev/null; then
+    if ! echo "$cleaned_response" | jq empty 2>/dev/null; then
         echo "❌ Invalid JSON Format"
         return 1
     fi
 
     # Extract values with jq
-    package=$(echo "$response" | jq -r '.package')
-    destination=$(echo "$response" | jq -r '.destination')
+    package=$(echo "$cleaned_response" | jq -r '.package')
+    destination=$(echo "$cleaned_response" | jq -r '.destination')
 
-    # Fix double path issue in destination
-    corrected_destination=$(echo "$destination" | sed 's|/nas/content/live/stagingpublic/wp-content/themes//nas/content/live/stagingpublic/wp-content/themes/|/nas/content/live/stagingpublic/wp-content/themes/|g')
-
-    # Debug: Show Extracted Values
+    # Debug extracted values
     echo "✅ Parsed JSON:"
     echo "📦 Package: $package"
-    echo "📂 Destination (Original): $destination"
-    echo "📂 Destination (Corrected): $corrected_destination"
+    echo "📂 Destination: $destination"
+
+    # Ensure valid package and destination
+    if [[ -z "$package" || -z "$destination" ]]; then
+        echo "❌ ERROR: Package or Destination is missing!"
+        return 1
+    fi
+
+    # Fix duplicate paths in destination (optional)
+    corrected_destination=$(echo "$destination" | sed 's|/nas/content/live/stagingpublic/wp-content/themes//nas/content/live/stagingpublic/wp-content/themes/|/nas/content/live/stagingpublic/wp-content/themes/|g')
 
     # Execute SSH command
     ssh -i "$ssh_key_path" -p "$ssh_port" ${ssh_connection} "
