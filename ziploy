@@ -98,56 +98,54 @@ create_ziploy() {
 
 process_response() {
     local response="$1"
-    
-    # Debug: Print raw JSON response
+
+    # Debug: Print Raw JSON Response
     echo "🔍 Raw JSON Response:"
     echo "$response"
 
-    # Fix escaped slashes
-    response=$(echo "$response" | sed 's/\\\//\//g')
-
-    # Debug: Print cleaned JSON
-    echo "✅ Cleaned JSON Response:"
-    echo "$response"
-
-    # Check if response is valid JSON
-    if echo "$response" | jq . >/dev/null 2>&1; then
-        local package
-        local destination
-        package=$(echo "$response" | jq -r '.package')
-        destination=$(echo "$response" | jq -r '.destination')
-
-        echo "✅ Valid JSON Extracted:"
-        echo "📦 Package: $package"
-        echo "📂 Destination: $destination"
-
-        ssh -i "$ssh_key_path" -p "$ssh_port" ${ssh_connection} "
-            ssh_user=\"$ssh_user\"
-            base_path=/home/\$ssh_user/sites/\$ssh_user
-            full_zip_path=\$(realpath \"\$base_path$package\")
-            full_destination_path=\$(realpath \"$destination\")
-
-            mkdir -p \"\$full_destination_path\"
-
-            echo \"✅ Using Absolute Paths\"
-            echo \"👤 SSH User: \$ssh_user\"
-            echo \"📂 Base Path: \$base_path\"
-            echo \"📦 ZIP File: \$full_zip_path\"
-            echo \"📂 Destination: \$full_destination_path\"
-
-            if [ -f \"\$full_zip_path\" ]; then
-                echo \"📦 Extracting ZIP File...\"
-                unzip -o \"\$full_zip_path\" -d \"\$full_destination_path\"
-                echo \"✅ Extraction Completed\"
-            else
-                echo \"❌ ZIP file not found at \$full_zip_path\"
-                exit 1
-            fi
-        "
-    else
-        echo "❌ Invalid JSON"
-        echo "$response"
+    # Validate JSON format before processing
+    if ! echo "$response" | jq empty 2>/dev/null; then
+        echo "❌ Invalid JSON Format"
+        return 1
     fi
+
+    # Extract values with jq
+    package=$(echo "$response" | jq -r '.package')
+    destination=$(echo "$response" | jq -r '.destination')
+
+    # Fix double path issue in destination
+    corrected_destination=$(echo "$destination" | sed 's|/nas/content/live/stagingpublic/wp-content/themes//nas/content/live/stagingpublic/wp-content/themes/|/nas/content/live/stagingpublic/wp-content/themes/|g')
+
+    # Debug: Show Extracted Values
+    echo "✅ Parsed JSON:"
+    echo "📦 Package: $package"
+    echo "📂 Destination (Original): $destination"
+    echo "📂 Destination (Corrected): $corrected_destination"
+
+    # Execute SSH command
+    ssh -i "$ssh_key_path" -p "$ssh_port" ${ssh_connection} "
+        ssh_user=\"$ssh_user\"
+        base_path=/home/\$ssh_user/sites/\$ssh_user
+        full_zip_path=\$(realpath \"\$base_path$package\")
+        full_destination_path=\$(realpath \"$corrected_destination\")
+
+        mkdir -p \"\$full_destination_path\"
+
+        echo \"✅ Using Absolute Paths\"
+        echo \"👤 SSH User: \$ssh_user\"
+        echo \"📂 Base Path: \$base_path\"
+        echo \"📦 ZIP File: \$full_zip_path\"
+        echo \"📂 Destination: \$full_destination_path\"
+
+        if [ -f \"\$full_zip_path\" ]; then
+            echo \"📦 Extracting ZIP File...\"
+            unzip -o \"\$full_zip_path\" -d \"\$full_destination_path\"
+            echo \"✅ Extraction Completed\"
+        else
+            echo \"❌ ZIP file not found at \$full_zip_path\"
+            exit 1
+        fi
+    "
 }
 
 upload_files() {
