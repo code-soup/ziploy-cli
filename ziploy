@@ -115,6 +115,8 @@ process_response() {
             full_zip_path=\$(realpath \"\$base_path/wp-content/ziploy/temp/another-public.zip\")
             full_destination_path=\$(realpath \"\$base_path/wp-content/themes/another-ssh-test\")
 
+            mkdir full_destination_path
+
             echo \"✅ Using Absolute Paths\"
             echo \"👤 SSH User: \$ssh_user\"
             echo \"📂 Base Path: \$base_path\"
