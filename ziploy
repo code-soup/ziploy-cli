@@ -18,13 +18,14 @@ zipFilename='_ziploy.zip'
 # Credentials and endpoint
 ziployId="${1}"
 ziployRemoteHost=$(echo "$2" | xargs)
-ziployMode="${3}"
+ziployMethod="${3}"
 ziployEndpoint="${ziployRemoteHost%/}/wp-json/ziploy/v1/update"
 #ziployEndpointUpdate="${ziployRemoteHost%/}/wp-json/ziploy/v1/ziploy"
 
 # SSH data
-ssh_connection="$4"
-ssh_key_path="$5"
+ssh_user="$4"
+ssh_connection="$5"
+ssh_key_path="$6"
 
 # Directory for split chunks
 ziployTargetDir="__to-ziploy"
@@ -106,29 +107,31 @@ process_response() {
         package=$(echo "$response" | jq -r '.package')
         destination=$(echo "$response" | jq -r '.destination')
 
-        echo "$package"
-        echo "$destination"
+        ssh -i "$ssh_key_path" -p "$ssh_port" ${ssh_connection} "
+            ssh_user=\"$ssh_user\"
+            base_path=/home/\$ssh_user/sites/\$ssh_user
+            full_zip_path=\$(realpath \"\$base_path/wp-content/ziploy/temp/another-public.zip\")
+            full_destination_path=\$(realpath \"\$base_path/wp-content/themes/another-ssh-test\")
 
-        # Run this before the unzip command to check access:
-        ssh -i "${ssh_key_path}" ${ssh_connection} "ls -ld '${destination}' && whoami"
+            echo \"✅ Using Absolute Paths\"
+            echo \"👤 SSH User: \$ssh_user\"
+            echo \"📂 Base Path: \$base_path\"
+            echo \"📦 ZIP File: \$full_zip_path\"
+            echo \"📂 Destination: \$full_destination_path\"
 
-        # Modify the unzip command to test permissions before extraction:
-        ssh -i "${ssh_key_path}" ${ssh_connection} "touch '${destination}/testfile' && rm '${destination}/testfile'"
-
-        ssh_output=$(ssh -i "${ssh_key_path}" ${ssh_connection} "unzip -o '${package}' -d '${destination}' 2>&1")
-        ssh_status=$?
-
-        echo "🔍 SSH Output:"
-        echo "$ssh_output"
-
-        if [[ $ssh_status -ne 0 ]]; then
-            echo "❌ SSH command failed with exit code $ssh_status"
-            exit 1
-        fi
+            if [ -f \"\$full_zip_path\" ]; then
+                echo \"📦 Extracting ZIP File...\"
+                unzip -o \"\$full_zip_path\" -d \"\$full_destination_path\"
+                echo \"✅ Extraction Completed\"
+            else
+                echo \"❌ ZIP file not found at \$full_zip_path\"
+                exit 1
+            fi
+        "
         
         # Execute SSH command to extract the zip file on remote server
         # Uncomment and modify the following line as needed:
-        ssh -i ${ssh_key_path} ${ssh_connection} "unzip -o ${package} -d ${destination}"
+        #ssh -i ${ssh_key_path} ${ssh_connection} "unzip -o ${package} -d ${destination}"
     else
         echo "$response"
     fi
