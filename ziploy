@@ -137,7 +137,7 @@ process_response() {
         # Uncomment and modify the following line as needed:
         #ssh -i ${ssh_key_path} ${ssh_connection} "unzip -o ${package} -d ${destination}"
     else
-        echo "Invalid JSNO"
+        echo "Invalid JSON"
         echo "$response"
     fi
 }
