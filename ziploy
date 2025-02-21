@@ -107,6 +107,8 @@ process_response() {
         package=$(echo "$response" | jq -r '.package')
         destination=$(echo "$response" | jq -r '.destination')
 
+        echo "Valid JSON"
+
         ssh -i "$ssh_key_path" -p "$ssh_port" ${ssh_connection} "
             ssh_user=\"$ssh_user\"
             base_path=/home/\$ssh_user/sites/\$ssh_user
@@ -133,6 +135,7 @@ process_response() {
         # Uncomment and modify the following line as needed:
         #ssh -i ${ssh_key_path} ${ssh_connection} "unzip -o ${package} -d ${destination}"
     else
+        echo "Invalid JSNO"
         echo "$response"
     fi
 }
