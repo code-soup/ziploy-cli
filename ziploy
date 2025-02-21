@@ -99,47 +99,44 @@ create_ziploy() {
 process_response() {
     local response="$1"
 
-    # Debug: Print Raw JSON Response
-    echo "🔍 Raw JSON Response:"
-    echo "$response"
+    # Debug raw response
+    echo "🔍 Raw JSON Response (Before Processing):"
+    printf "%s\n" "$response"
 
-    # Fix escaped slashes
-    cleaned_response=$(echo "$response" | sed 's/\\\//\//g')
+    # Trim leading/trailing whitespace & remove carriage returns
+    cleaned_response=$(echo "$response" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
-    # Debug: Print Cleaned JSON
+    # Debug cleaned response
     echo "✅ Cleaned JSON Response:"
-    echo "$cleaned_response"
+    printf "%s\n" "$cleaned_response"
 
-    # Validate JSON format before processing
+    # Validate JSON format
     if ! echo "$cleaned_response" | jq empty 2>/dev/null; then
-        echo "❌ Invalid JSON Format"
+        echo "❌ ERROR: JSON format is invalid!"
         return 1
     fi
 
-    # Extract values with jq
+    # Extract values
     package=$(echo "$cleaned_response" | jq -r '.package')
     destination=$(echo "$cleaned_response" | jq -r '.destination')
 
-    # Debug extracted values
-    echo "✅ Parsed JSON:"
+    # Debug parsed values
+    echo "✅ Extracted Values:"
     echo "📦 Package: $package"
     echo "📂 Destination: $destination"
 
-    # Ensure valid package and destination
+    # Ensure values are not empty
     if [[ -z "$package" || -z "$destination" ]]; then
-        echo "❌ ERROR: Package or Destination is missing!"
+        echo "❌ ERROR: Missing required fields in JSON!"
         return 1
     fi
-
-    # Fix duplicate paths in destination (optional)
-    corrected_destination=$(echo "$destination" | sed 's|/nas/content/live/stagingpublic/wp-content/themes//nas/content/live/stagingpublic/wp-content/themes/|/nas/content/live/stagingpublic/wp-content/themes/|g')
 
     # Execute SSH command
     ssh -i "$ssh_key_path" -p "$ssh_port" ${ssh_connection} "
         ssh_user=\"$ssh_user\"
         base_path=/home/\$ssh_user/sites/\$ssh_user
         full_zip_path=\$(realpath \"\$base_path$package\")
-        full_destination_path=\$(realpath \"$corrected_destination\")
+        full_destination_path=\$(realpath \"$destination\")
 
         mkdir -p \"\$full_destination_path\"
 
