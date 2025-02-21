@@ -183,7 +183,7 @@ upload_files() {
             echo "🔍 Response HTTP Status: $http_status"
             echo "📦 Response Body: $response_body"
 
-            process_response "$response_body"
+            # process_response "$response_body"
 
             # Check if upload failed
             if [[ "$http_status" -ne 200 ]]; then
