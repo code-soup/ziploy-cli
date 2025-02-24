@@ -152,7 +152,8 @@ upload_files() {
         find "$ziployTargetDir" -type f -print0 | while IFS= read -r -d '' file; do
             current=$((current + 1))
             
-            echo "🚀 Uploading: $file ($current of $total)"
+            # echo "🚀 Uploading: $file ($current of $total)"
+            echo "🚀 Uploading $file"
             
             response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -L -X POST "${ziployEndpointUpdate}" \
                 -H "cache-control: no-cache" \
