@@ -102,7 +102,7 @@ create_ziploy() {
 }
 
 process_ziploy() {
-    echo "process_ziploy"
+    echo "Process ziploy"
 
     response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -L -X POST "${ziployEndpointZiploy}" \
         -H "cache-control: no-cache" \
@@ -122,27 +122,27 @@ process_response() {
     local cleaned_response
     cleaned_response=$(echo "$response" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
-    if echo "$cleaned_response" | jq -e 'has("package") and has("destination")' >/dev/null 2>&1; then
+    local has_pkg_dest has_message
+    has_pkg_dest=$(echo "$cleaned_response" | jq 'has("package") and has("destination")')
+    has_message=$(echo "$cleaned_response" | jq 'has("message")')
+
+    if [ "$has_pkg_dest" = "true" ]; then
         package=$(echo "$cleaned_response" | jq -r '.package')
-        package="$ssh_user$package"
         destination=$(echo "$cleaned_response" | jq -r '.destination')
+        package="$ssh_user$package"
         destination="$ssh_user$destination"
 
         ssh -i "$ssh_key_path" ${ssh_connection} "
             unzip -o \$(eval echo ~)/sites/${package} -d \$(eval echo ~)/sites/${destination}
         "
-        # process_ziploy
-        
-        
-        echo "Processing Ziploy"
 
-    elif echo "$cleaned_response" | jq -e 'has("message")' >/dev/null 2>&1; then
+        process_ziploy
+    elif [ "$has_message" = "true" ]; then
         echo "$(echo "$cleaned_response" | jq -r '.message')"
     else
         echo "Unexpected response: $cleaned_response"
     fi
 }
-
 upload_files() {
     if [ -d "$ziployTargetDir" ]; then
         echo "Uploading files from $ziployTargetDir to remote server"
