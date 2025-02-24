@@ -131,7 +131,7 @@ process_response() {
         ssh -i "$ssh_key_path" ${ssh_connection} "
             unzip -o \$(eval echo ~)/sites/${package} -d \$(eval echo ~)/sites/${destination}
         "
-        process_ziploy
+        # process_ziploy
         
         
         echo "Processing Ziploy"
