@@ -120,29 +120,54 @@ process_ziploy() {
 process_response() {
     local response="$1"
     local cleaned_response
+
+    # Clean up response to remove unwanted whitespace or carriage return characters
     cleaned_response=$(echo "$response" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
-    local has_pkg_dest has_message
-    has_pkg_dest=$(echo "$cleaned_response" | jq 'has("package") and has("destination")')
-    has_message=$(echo "$cleaned_response" | jq 'has("message")')
+    # Debugging: Print cleaned response for verification
+    echo "Debug: Cleaned Response: $cleaned_response"
 
-    if [ "$has_pkg_dest" = "true" ]; then
+    # Check if response contains "package" and "destination"
+    if echo "$cleaned_response" | jq -e 'has("package") and has("destination")' >/dev/null 2>&1; then
         package=$(echo "$cleaned_response" | jq -r '.package')
         destination=$(echo "$cleaned_response" | jq -r '.destination')
+
+        # Debugging: Print extracted values for verification
+        echo "Debug: Package: $package"
+        echo "Debug: Destination: $destination"
+
+        # Prepend SSH user to paths
         package="$ssh_user$package"
         destination="$ssh_user$destination"
 
+        # Execute SSH command to unzip files
         ssh -i "$ssh_key_path" ${ssh_connection} "
             unzip -o \$(eval echo ~)/sites/${package} -d \$(eval echo ~)/sites/${destination}
-        "
+        " || {
+            echo "Error: SSH command failed."
+            return 1
+        }
 
+        # Call process_ziploy after successful unzipping
         process_ziploy
-    elif [ "$has_message" = "true" ]; then
-        echo "$(echo "$cleaned_response" | jq -r '.message')"
+
+    # Check if response contains only "message"
+    elif echo "$cleaned_response" | jq -e 'has("message")' >/dev/null 2>&1; then
+        message=$(echo "$cleaned_response" | jq -r '.message')
+
+        # Debugging: Print extracted message for verification
+        echo "Debug: Message: $message"
+
+        echo "$message"
+
+    # Handle unexpected responses
     else
         echo "Unexpected response: $cleaned_response"
     fi
 }
+
+
+
 upload_files() {
     if [ -d "$ziployTargetDir" ]; then
         echo "Uploading files from $ziployTargetDir to remote server"
