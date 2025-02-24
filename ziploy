@@ -16,16 +16,21 @@ ignoreList='.ziployignore'
 zipFilename='_ziploy.zip'
 
 # Credentials and endpoint
-ziployId="${1}"
-ziployRemoteHost=$(echo "$2" | xargs)
-ziployMethod="${3}"
+ziployId="${2}"
+ziployRemoteHost=$(echo "$3" | xargs)
+ziployMethod="${1}"
 ziployEndpoint="${ziployRemoteHost%/}/wp-json/ziploy/v1/update"
-#ziployEndpointUpdate="${ziployRemoteHost%/}/wp-json/ziploy/v1/ziploy"
+ziployEndpointUpdate="${ziployRemoteHost%/}/wp-json/ziploy/v1/update"
+ziployEndpointZiploy="${ziployRemoteHost%/}/wp-json/ziploy/v1/ziploy"
 
 # SSH data
 ssh_user="$4"
-ssh_connection="$5"
-ssh_key_path="$6"
+ssh_port="$6"
+ssh_server="$5"
+ssh_key_path="$7"
+
+# Connection
+ssh_connection="-p ${ssh_port} ${ssh_user}@${ssh_server}"
 
 # Directory for split chunks
 ziployTargetDir="__to-ziploy"
@@ -96,65 +101,39 @@ create_ziploy() {
     done
 }
 
+process_ziploy() {
+    echo "process_ziploy"
+
+    response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -L -X POST "${ziployEndpointZiploy}" \
+        -H "cache-control: no-cache" \
+        -F "id=${ziployId}"
+    #    -F "id=${destination}"
+    )
+
+    echo "$response"
+
+    # Extract HTTP status
+    http_status=$(echo "$response" | grep -o 'HTTP_STATUS:[0-9]*' | cut -d: -f2)
+    response_body=$(echo "$response" | sed -E 's/HTTP_STATUS:[0-9]+$//')
+}
+
 process_response() {
     local response="$1"
-
-    # Debug raw response
-    echo "🔍 Raw JSON Response (Before Processing):"
-    printf "%s\n" "$response"
 
     # Trim leading/trailing whitespace & remove carriage returns
     cleaned_response=$(echo "$response" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
-    # Debug cleaned response
-    echo "✅ Cleaned JSON Response:"
-    printf "%s\n" "$cleaned_response"
-
-    # Validate JSON format
-    if ! echo "$cleaned_response" | jq empty 2>/dev/null; then
-        echo "❌ ERROR: JSON format is invalid!"
-        return 1
-    fi
-
     # Extract values
     package=$(echo "$cleaned_response" | jq -r '.package')
+    package="$ssh_user$package"
     destination=$(echo "$cleaned_response" | jq -r '.destination')
+    destination="$ssh_user$destination"
 
-    # Debug parsed values
-    echo "✅ Extracted Values:"
-    echo "📦 Package: $package"
-    echo "📂 Destination: $destination"
-
-    # Ensure values are not empty
-    if [[ -z "$package" || -z "$destination" ]]; then
-        echo "❌ ERROR: Missing required fields in JSON!"
-        return 1
-    fi
-
-    # Execute SSH command
-    ssh -i "$ssh_key_path" -p "$ssh_port" ${ssh_connection} "
-        ssh_user=\"$ssh_user\"
-        base_path=/home/\$ssh_user/sites/\$ssh_user
-        full_zip_path=\$(realpath \"\$base_path$package\")
-        full_destination_path=\$(realpath \"$destination\")
-
-        mkdir -p \"\$full_destination_path\"
-
-        echo \"✅ Using Absolute Paths\"
-        echo \"👤 SSH User: \$ssh_user\"
-        echo \"📂 Base Path: \$base_path\"
-        echo \"📦 ZIP File: \$full_zip_path\"
-        echo \"📂 Destination: \$full_destination_path\"
-
-        if [ -f \"\$full_zip_path\" ]; then
-            echo \"📦 Extracting ZIP File...\"
-            unzip -o \"\$full_zip_path\" -d \"\$full_destination_path\"
-            echo \"✅ Extraction Completed\"
-        else
-            echo \"❌ ZIP file not found at \$full_zip_path\"
-            exit 1
-        fi
+    ssh -i "$ssh_key_path" ${ssh_connection} "
+        unzip -o \$(eval echo ~)/sites/${package} -d \$(eval echo ~)/sites/${destination}
     "
+
+    process_ziploy
 }
 
 upload_files() {
@@ -168,11 +147,10 @@ upload_files() {
             
             echo "🚀 Uploading: $file ($current of $total)"
             
-            response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -L -X POST "${ziployEndpoint}" \
+            response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -L -X POST "${ziployEndpointUpdate}" \
                 -H "cache-control: no-cache" \
                 -F "ziploy=@${file}" \
                 -F "id=${ziployId}" \
-                -F "secret=${ziploySecret}" \
                 -F "current=${current}" \
                 -F "total=${total}")
 
@@ -180,14 +158,12 @@ upload_files() {
             http_status=$(echo "$response" | grep -o 'HTTP_STATUS:[0-9]*' | cut -d: -f2)
             response_body=$(echo "$response" | sed -E 's/HTTP_STATUS:[0-9]+$//')
 
-            echo "🔍 Response HTTP Status: $http_status"
-            echo "📦 Response Body: $response_body"
-
-            # process_response "$response_body"
+            process_response "$response_body"
+            process_ziploy
 
             # Check if upload failed
             if [[ "$http_status" -ne 200 ]]; then
-                echo "❌ Upload failed for $file"
+                echo \"\n❌ Upload failed for $file\"
                 exit 1
             fi
         done
