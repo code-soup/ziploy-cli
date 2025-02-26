@@ -1,127 +1,248 @@
 import argparse
 import os
 import sys
-import zipfile
 import shutil
-import requests
-import subprocess
 import logging
-import concurrent.futures
 import time
+import subprocess
+import asyncio
+import aiohttp
+from urllib.parse import urlparse
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+def create_session():
+    # Still used by non-upload parts if needed.
+    session = aiohttp.ClientSession()  # Not used for uploads; we use our own aiohttp.ClientSession in async code.
+    return session
 
 def setup_logging(verbose):
-    """Configures logging settings."""
     log_level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(level=log_level, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("ziploy.log", mode='w')
-    ])
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler("ziploy.log", mode='w')
+        ]
+    )
 
-def validate_args(args):
-    """Validates the provided CLI arguments."""
-    if args.ssh_data[2] <= 0 or args.ssh_data[2] > 65535:
-        logging.error("Invalid SSH port. Must be between 1-65535.")
-        sys.exit(1)
-    
-    if not os.path.isfile(args.ssh_data[3]):
-        logging.error(f"SSH key file not found at {args.ssh_data[3]}")
-        sys.exit(1)
-    
-    if not args.ziployRemoteHost.startswith("http"):
-        logging.warning("Remote host URL does not appear to be valid. Ensure it starts with http or https.")
-    
+def validate_args(args, parser):
+    parsed_url = urlparse(args.ziployRemoteHost)
+    if parsed_url.scheme not in ('http', 'https'):
+         parser.error("Remote host URL must start with http or https.")
     logging.info("All parameters validated successfully.")
 
+def parse_ssh_config(args, parser):
+    if len(args.ssh_config) < 3:
+        parser.error("SSH configuration requires at least 3 values: SSH_USER, SSH_HOST, SSH_KEY")
+    if len(args.ssh_config) == 3:
+        ssh_user, ssh_host, ssh_key = [s.strip() for s in args.ssh_config]
+        ssh_port = 22
+    else:
+        ssh_user, ssh_host, ssh_port_str, ssh_key = [s.strip() for s in args.ssh_config[:4]]
+        if not ssh_port_str.isdigit():
+            parser.error("SSH_PORT must be an integer.")
+        ssh_port = int(ssh_port_str)
+    if not ssh_user:
+        parser.error("SSH_USER must be a non-empty string.")
+    if not ssh_host:
+        parser.error("SSH_HOST must be a non-empty string.")
+    if not ssh_key:
+        parser.error("SSH_KEY must be a non-empty string.")
+    return {
+        "user": ssh_user,
+        "host": ssh_host,
+        "port": ssh_port,
+        "key": ssh_key
+    }
+
+def build_api_endpoint(ziployRemoteHost):
+    return f"{ziployRemoteHost.rstrip('/')}/wp-json/ziploy/v1/update"
+
+def build_finalize_endpoint(ziployRemoteHost):
+    return f"{ziployRemoteHost.rstrip('/')}/wp-json/ziploy/v1/ziploy"
+
 def load_ignore_patterns():
-    """Loads ignore patterns from the default list and .ziployignore file if present."""
-    ignoreArray = ['*.swp', '.ziployignore', '*.git*', 'ziploy', 'node_modules/*', '__to-ziploy/', '__to-ziploy']
-    ignoreList = '.ziployignore'
+    ignore_patterns = [
+        '*.swp',
+        '.ziployignore',
+        '*.git*',
+        'ziploy*',
+        'node_modules/*',
+        '__to-ziploy',
+        '__to-ziploy/',
+        '_ziploy.zip',
+        'venv',
+        'venv/'
+    ]
     
-    if os.path.isfile(ignoreList):
-        with open(ignoreList, 'r') as f:
+    if os.path.isfile('.ziployignore'):
+        with open('.ziployignore', 'r') as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#'):
-                    ignoreArray.append(line)
-    
-    return ignoreArray
+                    ignore_patterns.append(line)
+    return ignore_patterns
 
-def safe_request(method, url, **kwargs):
-    """Makes a safe API request with retry handling."""
-    for attempt in range(3):  # Retry up to 3 times
-        try:
-            response = requests.request(method, url, **kwargs)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            logging.warning(f"Attempt {attempt + 1}: Request failed - {e}")
-            time.sleep(2)  # Wait before retrying
-    logging.error("Max retries reached. Exiting.")
-    sys.exit(1)
+def generate_chunks():
+    logging.info("Generating Ziploy package using system zip...")
+    output_folder = "__to_ziploy"
+    zip_filename = os.path.join(output_folder, "_ziploy.zip")
+    chunk_size = 5 * 1024 * 1024  # 5MB
+    ignore_patterns = load_ignore_patterns()
+
+    if os.path.exists(output_folder):
+        shutil.rmtree(output_folder)
+    os.makedirs(output_folder, exist_ok=True)
+
+    zip_command = ["zip", "-r", zip_filename, "."]
+    for pattern in ignore_patterns:
+        zip_command.extend(["-x", pattern])
+    try:
+        subprocess.run(zip_command, check=True)
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Error during zipping: {e}")
+        sys.exit(1)
+    logging.info("Ziploy package created successfully.")
+
+    logging.info("Splitting Ziploy package into chunks...")
+    try:
+        with open(zip_filename, 'rb') as f:
+            for chunk_index, chunk in enumerate(iter(lambda: f.read(chunk_size), b'')):
+                chunk_filename = os.path.join(output_folder, f"_ziploy.zip.z{chunk_index:03d}")
+                with open(chunk_filename, 'wb') as chunk_file:
+                    chunk_file.write(chunk)
+                logging.debug(f"Created chunk: {chunk_filename}")
+    except Exception as e:
+        logging.error(f"Error during file splitting: {e}")
+        sys.exit(1)
+    # Delete the original zip file after splitting into chunks
+    try:
+        os.remove(zip_filename)
+        logging.info(f"Deleted original zip file: {zip_filename}")
+    except Exception as e:
+        logging.error(f"Failed to delete zip file {zip_filename}: {e}")
+    num_chunks = len(os.listdir(output_folder))
+    logging.info(f"Ziploy package split into {num_chunks} chunks.")
+
+def get_chunk_files(output_folder):
+    # Only consider files with the expected prefix
+    return sorted([f for f in os.listdir(output_folder) if f.startswith("_ziploy.zip.z")])
+
+async def async_upload_chunk(session, api_endpoint, chunk_path, verify_ssl, ziployId, last_chunk=False):
+    # Read file content synchronously (chunk files are small)
+    with open(chunk_path, 'rb') as f:
+        file_data = f.read()
+    form = aiohttp.FormData()
+    form.add_field('id', ziployId)
+    if last_chunk:
+        form.add_field('last', 'true')
+    form.add_field('ziploy', file_data,
+                   filename=os.path.basename(chunk_path),
+                   content_type='application/octet-stream')
+    async with session.post(api_endpoint, data=form, ssl=verify_ssl) as resp:
+        resp.raise_for_status()
+        json_response = await resp.json()
+        return json_response
+
+async def async_upload_chunks(ziployRemoteHost, ziployId, verify_ssl, output_folder, ziployMethod="HTTP", ssh_params=None):
+    """
+    Asynchronously uploads chunks and, if the ziployMethod is SSH, calls ssh_unzip before finalizing.
+    
+    Parameters:
+        ziployRemoteHost (str): The remote host URL.
+        ziployId (str): The ziploy ID.
+        verify_ssl (bool): Whether to verify SSL certificates.
+        output_folder (str): Folder containing the chunks.
+        ziployMethod (str): Either "HTTP" or "SSH".
+        ssh_params (dict or None): If SSH is used, a dict with keys 'command' and 'config' (the latter being SSH_CONFIG).
+    """
+    api_endpoint = build_api_endpoint(ziployRemoteHost)
+    finalize_endpoint = build_finalize_endpoint(ziployRemoteHost)
+    chunk_files = get_chunk_files(output_folder)
+    tasks = []
+    
+    async with aiohttp.ClientSession() as session:
+        for idx, chunk in enumerate(chunk_files):
+            last_chunk = (idx == len(chunk_files) - 1)
+            chunk_path = os.path.join(output_folder, chunk)
+            tasks.append(async_upload_chunk(session, api_endpoint, chunk_path, verify_ssl, ziployId, last_chunk))
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        package, destination = None, None
+        for resp in responses:
+            if isinstance(resp, Exception):
+                logging.error(f"Error uploading chunk: {resp}")
+            elif isinstance(resp, dict):
+                logging.info(f"Uploaded 1: {resp.get('message', 'No message')}")
+                if 'package' in resp and 'destination' in resp:
+                    package, destination = resp['package'], resp['destination']
+            else:
+                logging.info(f"Uploaded 2: {resp}")
+        
+        # If the method is SSH, call ssh_unzip before finalizing deployment
+        if ziployMethod.upper() == "SSH" and ssh_params is not None:
+            logging.info("Method is SSH. Calling ssh_unzip before finalizing deployment.")
+            ssh_unzip(ssh_params.get("command"), ssh_params.get("config"))
+        
+        # Finalize deployment and log final response
+        async with aiohttp.ClientSession() as session:
+            async with session.post(finalize_endpoint,
+                                    json={
+                                        'id': ziployId,
+                                        'package': package,
+                                        'destination': destination,
+                                        'method': ziployMethod
+                                    },
+                                    ssl=verify_ssl) as finalize_resp:
+                finalize_resp.raise_for_status()
+                final_response = await finalize_resp.json()
+                logging.info(f"Deployment process initiated successfully. Final response: {final_response}")
+
+def ssh_unzip(command, SSH_CONFIG):
+    ssh_command = [
+        "ssh", "-i", SSH_CONFIG["key"], "-p", str(SSH_CONFIG["port"]),
+        f"{SSH_CONFIG['user']}@{SSH_CONFIG['host']}", command
+    ]
+    try:
+        result = subprocess.run(ssh_command, capture_output=True, text=True, check=True)
+        logging.info(f"SSH command executed successfully: {result.stdout}")
+    except subprocess.CalledProcessError as e:
+        logging.error(f"SSH command failed: {e.stderr}")
+        sys.exit(1)
 
 def cleanup():
-    """Deletes the __to_ziploy folder and all its contents."""
     output_folder = "__to_ziploy"
-    for attempt in range(3):
-        try:
-            if os.path.exists(output_folder):
-                shutil.rmtree(output_folder)
-                logging.info(f"Cleanup completed: {output_folder} deleted.")
-                return
-        except Exception as e:
-            logging.warning(f"Cleanup attempt {attempt + 1} failed: {e}")
-            time.sleep(2)  # Wait before retrying
-    logging.error("Failed to clean up after multiple attempts.")
-
-def upload_chunk(api_endpoint, chunk_path, verify_ssl):
-    """Uploads a single file chunk."""
-    with open(chunk_path, 'rb') as f:
-        files = {'file': f}
-        return safe_request("post", api_endpoint, files=files, verify=verify_ssl)
-
-def upload_chunks(ziployRemoteHost, ziployId, verify_ssl):
-    """Uploads zip chunks to the remote API and triggers deployment after completion."""
-    output_folder = "__to_ziploy"
-    api_endpoint = f"{ziployRemoteHost.rstrip('/')}/wp-json/ziploy/v1/update"
-    finalize_endpoint = f"{ziployRemoteHost.rstrip('/')}/wp-json/ziploy/v1/ziploy"
-    chunk_files = sorted(os.listdir(output_folder))
-    package, destination = None, None
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        results = executor.map(lambda chunk: upload_chunk(api_endpoint, os.path.join(output_folder, chunk), verify_ssl), chunk_files)
-    
-    for json_response in results:
-        logging.info(f"Uploaded: {json_response.get('message', 'No message')}")
-        if 'package' in json_response and 'destination' in json_response:
-            package, destination = json_response['package'], json_response['destination']
-    
-    if package and destination:
-        logging.info(f"Final Package: {package}, Destination: {destination}")
-        response = safe_request("post", finalize_endpoint, json={'id': ziployId, 'package': package, 'destination': destination}, verify=verify_ssl)
-        logging.info("Deployment process initiated successfully.")
-    cleanup()
+    if os.path.exists(output_folder):
+        shutil.rmtree(output_folder)
+        logging.info(f"Cleanup completed: {output_folder} deleted.")
 
 def main():
     parser = argparse.ArgumentParser(description="Ziploy CLI: Automates packaging and deployment.")
-    parser.add_argument("ziployMethod", type=str, nargs='?', default="SSH")
+    parser.add_argument("ziployMethod", type=str, nargs="?", default="SSH")
     parser.add_argument("ziployId", type=str)
     parser.add_argument("ziployRemoteHost", type=str)
-    parser.add_argument("--chunk-size", type=int, default=5, help="Chunk size in MB (default: 5MB)")
-    parser.add_argument("--dry-run", action="store_true", help="Run without making any changes")
-    parser.add_argument("--no-verify", action="store_false", dest="verify_ssl", help="Disable SSL verification (not recommended)")
+    parser.add_argument("ssh_config", nargs="*", metavar="SSH_CONFIG",
+                        help=("SSH credentials: if 3 values are provided, they're interpreted as SSH_USER, SSH_HOST, SSH_KEY "
+                              "(with default port 22); if 4 values, then as SSH_USER, SSH_HOST, SSH_PORT, SSH_KEY."))
     parser.add_argument("--verbose", action="store_true", help="Enable detailed logging")
     args = parser.parse_args()
-    
+
     setup_logging(args.verbose)
-    validate_args(args)
-    
-    if args.dry_run:
-        logging.info("Dry run mode enabled. No files will be uploaded.")
-        sys.exit(0)
-    
+    validate_args(args, parser)
+
+    if args.ziployMethod.upper() == "SSH":
+        SSH_CONFIG = parse_ssh_config(args, parser)
+    else:
+        SSH_CONFIG = {}
+
     start_time = time.time()
-    create_ziploy()
-    upload_chunks(args.ziployRemoteHost, args.ziployId, args.verify_ssl)
+    generate_chunks()
+    # Run asynchronous uploads
+    asyncio.run(async_upload_chunks(args.ziployRemoteHost, args.ziployId, False, "__to_ziploy"))
+    # Example usage of ssh_unzip:
+    # ssh_unzip("unzip /path/to/remote/file.zip", SSH_CONFIG)
+    cleanup()
     logging.info(f"Total execution time: {time.time() - start_time:.2f} seconds")
 
 if __name__ == "__main__":
