@@ -55,6 +55,7 @@ src
 test-dir
 vendor
 venv
+x86
 
 # Logs
 *.log
