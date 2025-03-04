@@ -1,33 +1,34 @@
 # Numerous always-ignore extensions
 *.diff
 *.err
-*.orig
+*.lock
 *.log
+*.orig
 *.rej
+*.sass-cache
+*.sh
+*.spec
 *.swo
 *.swp
 *.vi
 *~
-*.sass-cache
-*.lock
-*.spec
 
 # OS or Editor folders
-.DS_Store
-.DS_Store?
-Thumbs.db
-.cache
-.project
-.settings
-.tmproj
 *.esproj
-._*
-.Spotlight-V100
-.Trashes
-nbproject
 *.sublime-project
 *.sublime-workspace
+._*
+.cache
+.DS_Store
+.DS_Store?
+.project
+.settings
+.Spotlight-V100
+.tmproj
+.Trashes
+nbproject
 pnpm-lock.yaml
+Thumbs.db
 
 # Dreamweaver added files
 _notes
@@ -38,26 +39,26 @@ dwsync.xml
 .komodotools
 
 # Folders to ignore
-.hg
-.svn
 .CVS
-intermediate
+.hg
 .idea
-cache
-vendor
-build
-bower_components
-node_modules
-_test-src
-_private
+.svn
 _backup
-venv
+_private
+_test-src
+bower_components
+build
+cache
+intermediate
+node_modules
 src
 test-dir
+vendor
+venv
 
 # Logs
-logs
 *.log
+logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
