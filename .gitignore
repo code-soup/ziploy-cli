@@ -15,8 +15,7 @@
 
 # OS or Editor folders
 *.esproj
-*.sublime-project
-*.sublime-workspace
+*.sublime*
 ._*
 .cache
 .DS_Store
