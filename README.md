@@ -1,5 +1,8 @@
 # Ziploy CLI
 
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/code-soup/ziploy-cli?style=flat-square)
+![License](https://img.shields.io/github/license/code-soup/ziploy-cli?style=flat-square)
+
 Ziploy CLI is a :zap: lightning fast command‑line script that automates deployment via the [ziploy‑github‑action](https://github.com/code-soup/ziploy-github-action) and can also be run locally. This tool packages your project while excluding files specified in a `.ziployignore` file and then deploys it to a target WordPress website.
 
 **Important:** To successfully receive and apply your deployment, the target WordPress site must have the [Ziploy WordPress Plugin](https://www.ziploy.com) installed. This plugin is required whether you run deployments from GitHub Actions or directly from your local machine.
